@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:schedule_generator_with_gemini/network/gemini_services.dart';
+import 'package:hive/hive.dart';
+import 'package:my_protein/model/recipe_model.dart';
+import 'package:my_protein/network/gemini_services.dart';
+import 'package:my_protein/screens/saved_recipes_screen.dart';
 import 'package:shimmer/shimmer.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -12,455 +16,555 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
-  List<Map<String, dynamic>> _tasks = [];
-  final TextEditingController _taskController = TextEditingController();
-  final TextEditingController _durationController = TextEditingController();
-  String? _priority;
-  bool isLoading = false;
-  String? errorMessage = "";
-
-  List<Map<String, dynamic>> morningTasks = [];
-  List<Map<String, dynamic>> afternoonTasks = [];
-  List<Map<String, dynamic>> eveningTasks = [];
-  List<String> suggestions = [];
-
-  void _addTask() {
-    if (_taskController.text.isNotEmpty &&
-        _durationController.text.isNotEmpty &&
-        _priority != null) {
-      setState(() {
-        _tasks.add({
-          "task": _taskController.text,
-          "duration": "${_durationController.text} Menit",
-          "priority": _priority,
-          "deadline": "",
-        });
-
-        _taskController.clear();
-        _durationController.clear();
-
-        print(_tasks);
-      });
+class CurrencyInputFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    if (newValue.text.isEmpty) {
+      return newValue.copyWith(text: '');
     }
+
+    if (newValue.text.length < oldValue.text.length) {
+      return _handleDeletion(oldValue, newValue);
+    }
+
+    String cleanText = newValue.text.replaceAll(RegExp(r'[^\d]'), '');
+
+    String formattedText = _formatCurrency(cleanText);
+
+    int offset = newValue.selection.end;
+    int diff = formattedText.length - newValue.text.length;
+
+    return TextEditingValue(
+      text: formattedText,
+      selection: TextSelection.collapsed(offset: offset + diff),
+    );
   }
 
-  Future<void> generateSchedule() async {
+  TextEditingValue _handleDeletion(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    String cleanText = newValue.text.replaceAll(RegExp(r'[^\d]'), '');
+
+    if (cleanText.isEmpty) {
+      return newValue.copyWith(text: '');
+    }
+
+    String formattedText = _formatCurrency(cleanText);
+
+    int offset = newValue.selection.end;
+    int diff = formattedText.length - newValue.text.length;
+
+    return TextEditingValue(
+      text: formattedText,
+      selection: TextSelection.collapsed(offset: offset + diff),
+    );
+  }
+
+  String _formatCurrency(String value) {
+    if (value.isEmpty) return 'Rp0';
+
+    String text = value.split('').reversed.join();
+    String result = '';
+
+    for (int i = 0; i < text.length; i++) {
+      if (i % 3 == 0 && i != 0) {
+        result += '.';
+      }
+      result += text[i];
+    }
+
+    result = result.split('').reversed.join();
+
+    result = result.replaceAll(RegExp(r'^0+(?=\d)'), '');
+
+    if (result.isEmpty) return 'Rp0';
+
+    return 'Rp$result';
+  }
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  final TextEditingController _budgetController = TextEditingController();
+  final TextEditingController _proteinController = TextEditingController();
+  final TextEditingController _proteinSourceController =
+      TextEditingController();
+  bool isLoading = false;
+  String? errorMessage = "";
+  Map<String, dynamic>? recipeData;
+
+  final List<String> proteinSources = [
+    'Chicken',
+    'Eggs',
+    'Beef',
+    'Fish',
+    'Greek yogurt',
+    'Lentils',
+    'Chickpeas',
+    'Tofu',
+    'Tempe',
+    'Almonds',
+    'Peanuts',
+    'Peanut butter',
+    'Oats',
+    'Black beans',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _proteinSourceController.text = proteinSources.first;
+  }
+
+  Future<void> generateRecipe() async {
     setState(() => isLoading = true);
     try {
-      final result = await GeminiServices.generateSchedule(_tasks);
+      String getRawBudget() {
+        String clean = _budgetController.text
+            .replaceAll('Rp', '')
+            .replaceAll('.', '');
+        return clean.isEmpty ? '0' : clean;
+      }
+
+      final result = await GeminiServices.generateRecipe(
+        getRawBudget(),
+        _proteinController.text,
+        _proteinSourceController.text,
+      );
+
       if (result.containsKey('error')) {
         setState(() {
           errorMessage = result['error'];
-          morningTasks.clear();
-          afternoonTasks.clear();
-          eveningTasks.clear();
-          suggestions.clear();
+          recipeData = null;
           isLoading = false;
         });
         return;
       }
+
       setState(() {
-        morningTasks = List<Map<String, dynamic>>.from(result['pagi'] ?? []);
-        afternoonTasks = List<Map<String, dynamic>>.from(result['siang'] ?? []);
-        eveningTasks = List<Map<String, dynamic>>.from(result['malam'] ?? []);
-        suggestions =
-            (result['saran'] as List<dynamic>)
-                .map((item) => item['task'] as String)
-                .toList();
+        recipeData = result;
         isLoading = false;
       });
-      print(result);
     } catch (e) {
       setState(() {
-        errorMessage = "Failed to generate schedule\n$e";
-        morningTasks.clear();
-        afternoonTasks.clear();
-        eveningTasks.clear();
-        suggestions.clear();
+        errorMessage = "Failed to generate recipe\n$e";
+        recipeData = null;
         isLoading = false;
       });
+    }
+  }
+
+  Future<void> saveRecipe() async {
+    if (recipeData == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Tidak ada resep untuk disimpan!')),
+      );
+      return;
+    }
+
+    final recipe = RecipeModel(
+      recipeName: recipeData!['recipe_name'] ?? 'Resep Tanpa Nama',
+      ingredients: List<Map<String, dynamic>>.from(recipeData!['ingredients']),
+      totalCost: recipeData!['total_cost'] ?? 'Rp0',
+      totalProtein: recipeData!['total_protein'] ?? 0,
+      instructions: List<String>.from(recipeData!['instructions']),
+    );
+
+    try {
+      final recipeBox = Hive.box<RecipeModel>('recipes');
+      await recipeBox.add(recipe);
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Resep berhasil disimpan!')));
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Gagal menyimpan resep: $e')));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text("Schedule Generator"), centerTitle: true),
+      appBar: AppBar(
+        title: Text(
+          "ProteinPal",
+          style: GoogleFonts.poppins(
+            fontSize: 22,
+            fontWeight: FontWeight.w600,
+            color: Colors.white,
+          ),
+        ),
+        centerTitle: true,
+        backgroundColor: Colors.green[800],
+        elevation: 5,
+        actions: [
+          if (recipeData != null && !isLoading)
+            IconButton(
+              icon: Icon(Icons.save, color: Colors.white),
+              onPressed: saveRecipe,
+            ),
+        ],
+      ),
       body: SingleChildScrollView(
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(20),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              TextField(
-                controller: _taskController,
-                decoration: InputDecoration(
-                  label: Text("Nama Tugas"),
-                  hintText: "Nama Tugas",
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-              ),
-              SizedBox(height: 16),
-              TextField(
-                controller: _durationController,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  label: Text("Durasi (Menit)"),
-                  hintText: "Durasi (Menit)",
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-              ),
-              SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
-                    child: DropdownButtonFormField(
-                      hint: Text("Pilih Prioritas"),
-                      decoration: InputDecoration(
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                      items:
-                          ["Tinggi", "Sedang", "Rendah"]
-                              .map(
-                                (priority) => DropdownMenuItem(
-                                  value: priority,
-                                  child: Text(priority),
-                                ),
-                              )
-                              .toList(),
-                      onChanged:
-                          (String? priority) => setState(() {
-                            _priority = priority;
-                          }),
-                    ),
-                  ),
-                ],
-              ),
-              SizedBox(height: 16),
-              ElevatedButton.icon(
-                onPressed: _addTask,
-                label: Text(
-                  "Tambahkan Tugas",
-                  style: TextStyle(color: Colors.white),
-                ),
-                icon: Icon(Icons.add, color: Colors.white),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.blueAccent,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-              ),
-              SizedBox(height: 16),
-              if (_tasks.isNotEmpty)
-                SizedBox(
-                  height: 150,
-                  child: ListView.builder(
-                    itemCount: _tasks.length,
-                    itemBuilder: (context, index) {
-                      var task = _tasks[index];
-                      return Card(
-                        child: ListTile(
-                          leading: const Icon(
-                            FontAwesomeIcons.listCheck,
-                            color: Colors.blueAccent,
-                          ),
-                          title: Text(task["task"]),
-                          subtitle: Text(
-                            "Durasi: ${task["duration"]} | prioritas: ${task["priority"]}",
-                            style: TextStyle(color: Colors.grey, fontSize: 12),
-                          ),
+              _buildInputSection(),
+              const SizedBox(height: 24),
+              _buildGenerateButton(),
+              const SizedBox(height: 24),
+              if (errorMessage!.isNotEmpty && !isLoading) _buildErrorCard(),
+              if (isLoading) _buildLoadingShimmer(),
+              if (recipeData != null && !isLoading) _buildRecipeCard(),
+            ],
+          ),
+        ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed:
+            () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => SavedRecipesScreen()),
+            ),
+        child: const Icon(Icons.menu_book, color: Colors.white),
+        backgroundColor: Colors.green[800],
+        elevation: 4,
+      ),
+    );
+  }
 
-                          trailing: IconButton(
-                            onPressed: () {
-                              setState(() {
-                                _tasks.removeAt(index);
-                              });
-                            },
-                            icon: Icon(Icons.delete, color: Colors.red),
-                          ),
+  Widget _buildInputSection() {
+    return Column(
+      children: [
+        TextField(
+          controller: _budgetController,
+          keyboardType: TextInputType.number,
+          inputFormatters: [CurrencyInputFormatter()],
+          decoration: InputDecoration(
+            label: Text("Budget (IDR)", style: GoogleFonts.poppins()),
+            hintText: "Contoh: Rp50.000",
+            prefixIcon: const Icon(Icons.attach_money_rounded),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey[400]!),
+            ),
+            filled: true,
+            fillColor: Colors.grey[50],
+          ),
+        ),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _proteinController,
+          keyboardType: TextInputType.number,
+          decoration: InputDecoration(
+            label: Text("Target Protein (gram)", style: GoogleFonts.poppins()),
+            hintText: "Contoh: 50",
+            prefixIcon: const Icon(Icons.fitness_center),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey[400]!),
+            ),
+            filled: true,
+            fillColor: Colors.grey[50],
+          ),
+        ),
+        const SizedBox(height: 16),
+        DropdownButtonFormField(
+          value: _proteinSourceController.text,
+          decoration: InputDecoration(
+            label: Text("Sumber Protein Utama", style: GoogleFonts.poppins()),
+            prefixIcon: const Icon(Icons.food_bank),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey[400]!),
+            ),
+            filled: true,
+            fillColor: Colors.grey[50],
+          ),
+          items:
+              proteinSources.map((source) {
+                return DropdownMenuItem(
+                  value: source,
+                  child: Text(source, style: GoogleFonts.poppins()),
+                );
+              }).toList(),
+          onChanged:
+              (value) => setState(() {
+                _proteinSourceController.text = value!;
+              }),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildGenerateButton() {
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        onPressed: generateRecipe,
+        icon:
+            isLoading
+                ? SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+                : const Icon(
+                  Icons.restaurant_menu,
+                  size: 24,
+                  color: Colors.white,
+                ),
+        label: Text(
+          isLoading ? "Membuat Resep..." : "Buat Resep Sekarang",
+          style: GoogleFonts.poppins(
+            fontSize: 16,
+            fontWeight: FontWeight.w500,
+            color: Colors.white,
+          ),
+        ),
+        style: ElevatedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          backgroundColor: Colors.green[800],
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          elevation: 3,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildErrorCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.red[50],
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.red[200]!),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.error_outline, color: Colors.red[800]),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              errorMessage!,
+              style: GoogleFonts.poppins(
+                color: Colors.red[800],
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLoadingShimmer() {
+    return Column(
+      children: [
+        Shimmer.fromColors(
+          baseColor: Colors.grey[300]!,
+          highlightColor: Colors.grey[100]!,
+          child: Container(
+            height: 120,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Shimmer.fromColors(
+          baseColor: Colors.grey[300]!,
+          highlightColor: Colors.grey[100]!,
+          child: Container(
+            height: 200,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRecipeCard() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          "Resep Anda",
+          style: GoogleFonts.poppins(
+            fontSize: 24,
+            fontWeight: FontWeight.w600,
+            color: Colors.green[800],
+          ),
+        ),
+        const SizedBox(height: 16),
+        Card(
+          elevation: 3,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.restaurant, color: Colors.green[800], size: 28),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        recipeData!['recipe_name'] ?? "Resep",
+                        style: GoogleFonts.poppins(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w600,
                         ),
-                      );
-                    },
-                  ),
-                ),
-              SizedBox(height: 10),
-              if (_tasks.isNotEmpty && _tasks.length > 1)
-                ElevatedButton.icon(
-                  onPressed: generateSchedule,
-                  label: Text(
-                    isLoading ? "Generating ..." : "Generate Schedule",
-                    style: TextStyle(color: Colors.white),
-                  ),
-                  icon:
-                      isLoading
-                          ? SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 1,
-                              color: Colors.white,
-                            ),
-                          )
-                          : Icon(Icons.schedule, color: Colors.white),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
-                  ),
+                  ],
                 ),
-              if (errorMessage!.isNotEmpty && !isLoading)
-                Card(
-                  color: Colors.red,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Padding(
-                    padding: EdgeInsets.all(16),
+                const SizedBox(height: 20),
+                _buildSectionTitle("Bahan-bahan"),
+                ...(recipeData!['ingredients'] as List<dynamic>).map(
+                  (ingredient) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
                     child: Row(
                       children: [
-                        Icon(Icons.error, color: Colors.white),
-                        SizedBox(width: 8),
+                        Icon(Icons.circle, size: 8, color: Colors.green[800]),
+                        const SizedBox(width: 12),
                         Expanded(
-                          child: Text(
-                            errorMessage!,
-                            maxLines: 3,
-                            overflow: TextOverflow.ellipsis,
-                            style: GoogleFonts.poppins(color: Colors.white),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                "${ingredient['name']} (${ingredient['quantity']})",
+                                style: GoogleFonts.poppins(
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              Text(
+                                "Harga: ${ingredient['price']} | Protein: ${ingredient['protein']}g",
+                                style: GoogleFonts.poppins(
+                                  color: Colors.grey[600],
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
                     ),
                   ),
                 ),
-              SizedBox(height: 10),
-              if (isLoading)
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Shimmer.fromColors(
-                      baseColor: Colors.grey[300]!,
-                      highlightColor: Colors.grey[100]!,
-                      child: Card(
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: SizedBox(height: 10, width: 300),
-                      ),
-                    ),
-                    Shimmer.fromColors(
-                      baseColor: Colors.grey[300]!,
-                      highlightColor: Colors.grey[100]!,
-                      child: Card(
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: SizedBox(height: 40, width: 200),
-                      ),
-                    ),
-                    Shimmer.fromColors(
-                      baseColor: Colors.grey[300]!,
-                      highlightColor: Colors.grey[100]!,
-                      child: Card(
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: SizedBox(height: 60, width: 400),
-                      ),
-                    ),
-                    Shimmer.fromColors(
-                      baseColor: Colors.grey[300]!,
-                      highlightColor: Colors.grey[100]!,
-                      child: Card(
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: SizedBox(height: 10, width: 800),
-                      ),
-                    ),
-                  ],
+                const SizedBox(height: 24),
+                _buildTotalRow(
+                  "Total Biaya",
+                  recipeData!['total_cost'] ?? "Rp0",
                 ),
-
-              if (!isLoading &&
-                  errorMessage!.isEmpty &&
-                  (morningTasks.isNotEmpty ||
-                      afternoonTasks.isNotEmpty ||
-                      eveningTasks.isNotEmpty))
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Card(
-                      color: Colors.blueAccent.shade100,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              "Pagi",
-                              style: GoogleFonts.poppins(
-                                color: Colors.white,
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            SizedBox(height: 8),
-                            if (morningTasks.isEmpty)
-                              Text(
-                                "Tidak ada tugas",
-                                style: GoogleFonts.poppins(color: Colors.white),
-                              ),
-                            ...morningTasks.map(
-                              (morning) => ListTile(
-                                title: Text(
-                                  morning['task'],
-                                  style: GoogleFonts.poppins(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                                subtitle: Text(
-                                  morning["time"],
-                                  style: GoogleFonts.poppins(
-                                    color: Colors.white70,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    SizedBox(height: 8),
-                    Card(
-                      color: const Color.fromARGB(255, 255, 115, 0),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              "Siang",
-                              style: GoogleFonts.poppins(
-                                color: Colors.white,
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            SizedBox(height: 8),
-                            if (afternoonTasks.isEmpty)
-                              Text(
-                                "Tidak ada tugas",
-                                style: GoogleFonts.poppins(color: Colors.white),
-                              ),
-                            ...afternoonTasks.map(
-                              (afternoon) => ListTile(
-                                title: Text(
-                                  afternoon['task'],
-                                  style: GoogleFonts.poppins(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                                subtitle: Text(
-                                  afternoon["time"],
-                                  style: GoogleFonts.poppins(
-                                    color: Colors.white70,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    SizedBox(height: 8),
-                    Card(
-                      color: const Color.fromARGB(255, 44, 44, 44),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              "Malam",
-                              style: GoogleFonts.poppins(
-                                color: Colors.white,
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            SizedBox(height: 8),
-                            if (eveningTasks.isEmpty)
-                              Text(
-                                "Tidak ada tugas",
-                                style: GoogleFonts.poppins(color: Colors.white),
-                              ),
-                            ...eveningTasks.map(
-                              (evening) => ListTile(
-                                title: Text(
-                                  evening['task'],
-                                  style: GoogleFonts.poppins(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                                subtitle: Text(
-                                  evening["time"],
-                                  style: GoogleFonts.poppins(
-                                    color: Colors.white70,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    SizedBox(height: 8),
-                    Padding(
-                      padding: EdgeInsets.all(16),
-                      child: Text(
-                        "Saran:",
-                        style: GoogleFonts.poppins(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black,
-                        ),
-                      ),
-                    ),
-                    ...suggestions.map(
-                      (saran) => ListTile(
-                        leading: Icon(
-                          Icons.lightbulb,
-                          color: Colors.amber.shade400,
-                        ),
-                        title: Text(saran, style: GoogleFonts.poppins()),
-                      ),
-                    ),
-                  ],
+                _buildTotalRow(
+                  "Total Protein",
+                  "${recipeData!['total_protein']}g",
                 ),
-            ],
+                const SizedBox(height: 24),
+                _buildSectionTitle("Cara Membuat"),
+                ...(recipeData!['instructions'] as List<dynamic>).map(
+                  (step) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          "•",
+                          style: GoogleFonts.poppins(
+                            fontSize: 16,
+                            color: Colors.green[800],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            step.toString(),
+                            style: GoogleFonts.poppins(),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
+      ],
+    );
+  }
+
+  Widget _buildSectionTitle(String title) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          Icon(Icons.list_alt, color: Colors.green[800], size: 20),
+          const SizedBox(width: 8),
+          Text(
+            title,
+            style: GoogleFonts.poppins(
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              color: Colors.green[800],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTotalRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: GoogleFonts.poppins(
+              fontWeight: FontWeight.w500,
+              color: Colors.grey[700],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.green[50],
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              value,
+              style: GoogleFonts.poppins(
+                fontWeight: FontWeight.w600,
+                color: Colors.green[800],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

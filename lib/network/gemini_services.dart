@@ -6,16 +6,18 @@ import 'package:google_generative_ai/google_generative_ai.dart';
 class GeminiServices {
   static const String apiKey = 'AIzaSyDXGcb28Uf3n55GGiSz8vVK_HlwFluh1OA';
 
-  static Future<Map<String, dynamic>> generateSchedule(
-    List<Map<String, dynamic>> tasks,
+  static Future<Map<String, dynamic>> generateRecipe(
+    String budget,
+    String protein,
+    String proteinSource,
   ) async {
-    final prompt = _buildPrompt(tasks);
+    final prompt = _buildPrompt(budget, protein, proteinSource);
 
     final model = GenerativeModel(
       model: 'gemini-2.0-flash',
       apiKey: apiKey,
       generationConfig: GenerationConfig(
-        temperature: 1,
+        temperature: 0.7,
         topK: 40,
         topP: 0.95,
         maxOutputTokens: 8192,
@@ -27,50 +29,77 @@ class GeminiServices {
       history: [
         Content.multi([
           TextPart(
-            '\'You are a student creating a realistic daily schedule. Consider task priority, duration, breaks, and energy levels throughout the day. Ensure tasks are balanced and practical. Provide output in JSON format with "pagi", "siang", and "malam" sections. Each task should have "task" and "time" fields. Always include a schedule recommendation section titled "saran". add more emoticon and Do not include any additional text outside the JSON structure.\'\n',
+            '''Anda adalah seorang ahli gizi dan perencana makanan hemat budget. Buat resep yang memenuhi atau melebihi kebutuhan protein pengguna sambil tetap berada dalam budget. 
+  Selalu sertakan:
+  - Daftar bahan dengan jumlah, harga (dalam IDR), dan kandungan protein
+  - Total biaya resep dan total protein (HARUS MEMENUHI atau MELEBIHI protein yang diminta)
+  - Langkah-langkah memasak
+  - Gunakan harga dan bahan lokal Indonesia
+  Format respons dalam JSON. Jangan gunakan format markdown.''',
           ),
         ]),
         Content.model([
-          TextPart(
-            '```json\n{\n  "pagi": [\n    {\n      "task": "Wake up, hydrate, light stretching",\n      "time": "7:00 AM - 7:30 AM"\n    },\n    {\n      "task": "Breakfast and review daily schedule",\n      "time": "7:30 AM - 8:00 AM"\n    },\n    {\n      "task": "Focused study session (Math/Science)",\n      "time": "8:00 AM - 10:00 AM"\n    },\n    {\n      "task": "Short break: Walk, listen to music 🎧",\n      "time": "10:00 AM - 10:15 AM"\n    },\n    {\n      "task": "Review study notes and prepare for the day\'s class/activities",\n      "time": "10:15 AM - 11:00 AM"\n    },\n    {\n      "task": "Attend classes/meetings",\n      "time": "11:00 AM - 12:00 PM"\n    }\n  ],\n  "siang": [\n    {\n      "task": "Lunch",\n      "time": "12:00 PM - 12:30 PM"\n    },\n    {\n      "task": "Attend classes/meetings/Lab work",\n      "time": "12:30 PM - 2:30 PM"\n    },\n    {\n      "task": "Break: Walk in nature/ Get some Sunshine ☀️",\n      "time": "2:30 PM - 2:45 PM"\n    },\n    {\n      "task": "Work on assignments/projects (Less demanding)",\n      "time": "2:45 PM - 4:30 PM"\n    },\n    {\n      "task": "Gym/Excercise",\n      "time": "4:30 PM - 5:30 PM"\n    }\n\n  ],\n  "malam": [\n    {\n      "task": "Dinner",\n      "time": "5:30 PM - 6:00 PM"\n    },\n    {\n      "task": "Relaxation: Hobby/Social time",\n      "time": "6:00 PM - 7:00 PM"\n    },\n    {\n      "task": "Review notes or readings (lighter topics)",\n      "time": "7:00 PM - 8:00 PM"\n    },\n    {\n      "task": "Plan for the next day",\n      "time": "8:00 PM - 8:30 PM"\n    },\n    {\n      "task": "Personal care and prepare for bed",\n      "time": "8:30 PM - 9:30 PM"\n    },\n    {\n      "task": "Sleep 😴",\n      "time": "9:30 PM"\n    }\n  ],\n  "saran": [\n    {\n      "task": "Prioritize tasks based on deadlines and importance.",\n      "recommendation": "Use a planner or to-do list to track your tasks."\n    },\n    {\n      "task": "Take regular breaks to avoid burnout.",\n      "recommendation": "Even short breaks can improve focus and productivity."\n    },\n    {\n      "task": "Adjust the schedule based on your energy levels.",\n      "recommendation": "Schedule more demanding tasks for when you are most alert."\n    },\n    {\n      "task": "Ensure a balance between academic work and personal time.",\n      "recommendation": "Allocate time for hobbies, socializing, and relaxation."\n    },\n    {\n      "task": "Stay hydrated and eat healthy meals to maintain energy levels.",\n      "recommendation": "Avoid sugary snacks and drinks."\n    },\n     {\n      "task": "Keep a journal to track progress, insights and feeling. ",\n      "recommendation": "This will help with self awareness and improvements"\n    }\n  ]\n}\n```',
-          ),
+          TextPart('''{
+              "recipe_name": "Ayam Bakar Madu",
+              "ingredients": [
+                {
+                  "name": "Dada Ayam",
+                  "quantity": "300g",
+                  "price": "Rp15.000",
+                  "protein": 62
+                },
+                {
+                  "name": "Madu",
+                  "quantity": "2 sdm",
+                  "price": "Rp2.000",
+                  "protein": 0
+                }
+              ],
+              "total_cost": "Rp17.500",
+              "total_protein": 68,
+              "instructions": [
+                "Marinasi ayam dengan bumbu selama 30 menit",
+                "Panggang di oven 180°C selama 25 menit"
+              ]
+            }'''),
         ]),
       ],
     );
-    final message = prompt;
-    final content = Content.text(message);
-    try {
-      final response = await chat.sendMessage(content);
 
+    try {
+      final response = await chat.sendMessage(Content.text(prompt));
       final responseText =
           (response.candidates.first.content.parts.first as TextPart).text;
 
       if (responseText.isEmpty) {
-        return {"error": "Failed to generate schedule"};
+        return {"error": "Failed to generate recipe"};
       }
 
-      // JSON Pattern
-      RegExp jsonPattern = RegExp(r'\{.*\}', dotAll: true);
+      // Extract JSON from response
+      final jsonPattern = RegExp(r'\{.*\}', dotAll: true);
       final match = jsonPattern.firstMatch(responseText);
 
       if (match != null) {
         return jsonDecode(match.group(0)!);
       }
 
-      return jsonDecode(responseText);
+      return {"error": "Invalid response format"};
     } catch (e) {
-      return {"error": "Failed to generate schedule\n$e"};
+      return {"error": "Failed to generate recipe\n$e"};
     }
   }
 
-  static String _buildPrompt(List<Map<String, dynamic>> tasks) {
-    String tasklist = tasks
-        .map(
-          (task) =>
-              "-${task['task']} (Prioritas: ${task['priority']}, Durasi: ${task['duration']}, Deadline: ${task['deadline']})",
-        )
-        .join("\n");
-
-    return "Buatkan jadwal harian yang optimal dari list tugas berikut: \n$tasklist\n. Susun jadwal dari pagi hingga malam hari dengan efisien dan berikan output dalam bentuk JSON.";
+  static String _buildPrompt(
+    String budget,
+    String protein,
+    String proteinSource,
+  ) {
+    return '''Buatkan resep makanan dengan ketentuan:
+- Budget maksimal: Rp$budget
+- Total protein minimal: $protein gram (tidak boleh kurang dari ini)
+- Sumber protein utama: $proteinSource
+- Tampilkan harga per bahan dalam IDR
+- Hitung total biaya dan total protein
+- Berikan instruksi memasak yang jelas''';
   }
 }
